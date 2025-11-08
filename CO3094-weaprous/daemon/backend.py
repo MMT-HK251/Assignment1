@@ -75,6 +75,7 @@ def run_backend(ip, port, routes):
     :param routes (dict): Dictionary of route handlers.
     """
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
         server.bind((ip, port))
@@ -90,8 +91,17 @@ def run_backend(ip, port, routes):
             #        using multi-thread programming with the
             #        provided handle_client routine
             #
+            client_thread = threading.Thread(
+                target=handle_client,
+                args=(ip, port, conn, addr, routes)
+            )
+            client_thread.daemon = True  # Ensure thread exits when main program does
+            client_thread.start()
+            print(f"[Backend] New connection from {addr}, handled in thread.")
     except socket.error as e:
       print("Socket error: {}".format(e))
+    finally:
+        server.close()
 
 def create_backend(ip, port, routes={}):
     """

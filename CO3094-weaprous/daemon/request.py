@@ -29,7 +29,7 @@ class Request():
 
     Usage::
 
-      >>> import deamon.request
+      >>>   import deamon.request
       >>> req = request.Request()
       ## Incoming message obtain aka. incoming_msg
       >>> r = req.prepare(incoming_msg)
@@ -81,6 +81,7 @@ class Request():
              
     def prepare_headers(self, request):
         """Prepares the given HTTP headers."""
+        # Lay header va return cac cap header
         lines = request.split('\r\n')
         headers = {}
         for line in lines[1:]:
@@ -102,21 +103,28 @@ class Request():
         #
         # TODO manage the webapp hook in this mounting point
         #
-        
-        if not routes == {}:
-            self.routes = routes
-            self.hook = routes.get((self.method, self.path))
-            #
-            # self.hook manipulation goes here
-            # ...
-            #
+
+        self.routes = routes or {}
+        self.hook = routes.get((self.method, self.path)) #tuple
+        #
+        # self.hook manipulation goes here
+        # ...
+        #
 
         self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('cookie', '')
+        raw_cookies = self.headers.get('cookie', '')
             #
             #  TODO: implement the cookie function here
             #        by parsing the header            #
-
+        self.cookies = {}
+        if raw_cookies: #them ds cookie vao dict
+            for keyval in raw_cookies.split(';'):
+                if '=' in keyval:
+                    k,v = keyval.split('=', 1)
+                    self.cookies[k] = v
+        #Lay body, chia cai request o dau thanh header va body, neu header ket thuc \r\n\r\n thi ta lay
+        #Phan body [1], neu khong co thi se khong co body (GET)
+        self.body = request.split("\r\n\r\n", 1)[1].encode() if "\r\n\r\n" in request else b""
         return
 
     def prepare_body(self, data, files, json=None):
@@ -125,6 +133,7 @@ class Request():
         #
         # TODO prepare the request authentication
         #
+
 	# self.auth = ...
         return
 

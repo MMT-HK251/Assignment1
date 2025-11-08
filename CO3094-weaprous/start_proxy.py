@@ -27,7 +27,7 @@ Requirements:
 - socket: provide socket networking interface.
 - threading: enables concurrent client handling via threads.
 - argparse: parses command-line arguments for server configuration.
-- re: used for regular expression matching in configuration parsing
+- re: used for regular expression matching in configurat    ion parsing
 - response: response utilities.
 - httpadapter: the class for handling HTTP requests.
 - urlparse: parses URLs to extract host and port information.
@@ -39,7 +39,7 @@ import socket
 import threading
 import argparse
 import re
-from urlparse import urlparse
+from urllib.parse import urlparse
 from collections import defaultdict
 
 from daemon import create_proxy
@@ -88,16 +88,18 @@ def parse_virtual_hosts(config_file):
         #       the policy is applied to identify the highes matching
         #       proxy_pass
         #
+
         if len(proxy_map.get(host,[])) == 1:
             routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
         # esle if:
         #         TODO:  apply further policy matching here
         #
+
         else:
             routes[host] = (proxy_map.get(host,[]), dist_policy_map)
 
     for key, value in routes.items():
-        print key, value
+        print(key, value)
     return routes
 
 

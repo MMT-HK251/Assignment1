@@ -51,10 +51,10 @@ class Response():
 
     Usage::
 
-      >>> import Response
-      >>> resp = Response()
-      >>> resp.build_response(req)
-      >>> resp
+      #>>> import Response
+      #>>> resp = Response()
+      #>>> resp.build_response(req)
+      #>>> resp
       <Response>
     """
 
@@ -118,6 +118,60 @@ class Response():
         #: is a response.
         self.request = None
 
+    #helper
+    @staticmethod
+    def ok_html(body_bytes):
+        r = Response()
+        r.status_code = 200;
+        r.reason = "OK"
+        r.headers["Content-Type"] = "text/html"
+        r._content = body_bytes
+        return r
+
+    @staticmethod
+    def ok_json(obj):
+        import json
+        r = Response()
+        r.status_code = 200;
+        r.reason = "OK"
+        r.headers["Content-Type"] = "application/json"
+        r._content = (obj if isinstance(obj, (bytes, bytearray)) else json.dumps(obj).encode())
+        return r
+
+    @staticmethod
+    def unauthorized_html(msg="Unauthorized"):
+        # 401
+        r = Response()
+        r.status_code = 401;
+        r.reason = "Unauthorized"
+        r.headers["Content-Type"] = "text/html"
+        r._content = f"<h1>401 Unauthorized</h1><p>{msg}</p>".encode()
+        return r
+
+    @staticmethod
+    def internal_server_error_html(msg="Internal Server Error"):
+        # 500
+        r = Response()
+        r.status_code = 500;
+        r.reason = "Internal Server Error"
+        r.headers["Content-Type"] = "text/html"
+        r._content = f"<h1>500 Internal Server Error</h1><p>{msg}</p>".encode()
+        return r
+
+    def set_cookie(self, name, value, extras="Path=/; HttpOnly"):
+        #  allow setting cookies (supports multiple Set-Cookie)
+        # moi line la mot header set-cookie:
+        val = f"{name}={value}"
+        if extras:
+            val += f"; {extras}"
+        if "Set-Cookie" in self.headers:
+            prev = self.headers["Set-Cookie"]
+            if isinstance(prev, list):
+                prev.append(val)
+            else:
+                self.headers["Set-Cookie"] = [prev, val]
+        else:
+            self.headers["Set-Cookie"] = val
 
     def get_mime_type(self, path):
         """
@@ -159,7 +213,9 @@ class Response():
             elif sub_type == 'html':
                 base_dir = BASE_DIR+"www/"
             else:
-                handle_text_other(sub_type)
+                #handle_text_other(sub_type)
+                print(f"[Response] Unsupported text sub_type: {sub_type}")
+                raise ValueError("Invalid MEME type")
         elif main_type == 'image':
             base_dir = BASE_DIR+"static/"
             self.headers['Content-Type']='image/{}'.format(sub_type)
@@ -201,18 +257,71 @@ class Response():
             #  TODO: implement the step of fetch the object file
             #        store in the return value of content
             #
-        return len(content), content
+        # Neu khong co file thi return empty
+        if not os.path.exists(filepath) or not os.path.isfile(filepath):
+            return 0, b""
+        try:  # CHANGE: Add try-except for file read
+            with open(filepath, "rb") as f:
+                content = f.read()
+            return len(content), content
+        except Exception as e:
+            print(f"[Response] Error reading file {filepath}: {e}")
+            return 0, b""
 
+    def serialize(self):
+        """Serializes the complete HTTP response into bytes."""
+        # Ensure status and reason are set, default if not
+        if not self.status_code:
+            self.status_code = 200
+        if not self.reason:
+            self.reason = "OK"
 
+        status_line = f"HTTP/1.1 {self.status_code} {self.reason}\r\n"
+
+        # Prepare headers
+        header_lines = []
+
+        # Set content length header if body exists and not already set
+        if self._content is not False and 'Content-Length' not in self.headers:
+            self.headers['Content-Length'] = str(len(self._content))
+
+        # Add standard headers if not present
+        if 'Date' not in self.headers:
+            self.headers['Date'] = datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if 'Connection' not in self.headers:
+            self.headers['Connection'] = 'close'
+
+        # Format all headers
+        for key, value in self.headers.items():
+            # Vi set cookie co nhieu dong, nen ta append nhieu dong vao headerline thay vi gom chung
+            if key.lower() == 'set-cookie' and isinstance(value, list):
+                for cookie_val in value:
+                    header_lines.append(f"Set-Cookie: {cookie_val}\r\n")
+            else:
+                header_lines.append(f"{key}: {value}\r\n")
+
+        headers_str = "".join(header_lines) #Gom lai thanh moi chuoi duy nhat
+
+        # Combine all parts thanh 1 byte duy nhat
+        response_bytes = status_line.encode('utf-8')
+        response_bytes += headers_str.encode('utf-8')
+        response_bytes += b"\r\n"  # End of headers
+
+        if self._content: #body
+            response_bytes += self._content
+
+        return response_bytes
+
+    """ Thay bang serialize
     def build_response_header(self, request):
-        """
+        
         Constructs the HTTP response headers based on the class:`Request <Request>
         and internal attributes.
 
         :params request (class:`Request <Request>`): incoming request object.
 
         :rtypes bytes: encoded HTTP response header.
-        """
+        
         reqhdr = request.headers
         rsphdr = self.headers
 
@@ -228,6 +337,7 @@ class Response():
         #
         # TODO prepare the request authentication
         #
+
 	# self.auth = ...
                 "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
                 "Max-Forward": "10",
@@ -247,27 +357,29 @@ class Response():
         #
 	# self.auth = ...
         return str(fmt_header).encode('utf-8')
+    """
 
-
+    """
     def build_notfound(self):
-        """
-        Constructs a standard 404 Not Found HTTP response.
+        
+            Constructs a standard 404 Not Found HTTP response.
+    
+            :rtype bytes: Encoded 404 response.
+            
+    
+            return (
+                    "HTTP/1.1 404 Not Found\r\n"
+                    "Accept-Ranges: bytes\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Content-Length: 13\r\n"
+                    "Cache-Control: max-age=86000\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "404 Not Found"
+                ).encode('utf-8')
+    """
 
-        :rtype bytes: Encoded 404 response.
-        """
-
-        return (
-                "HTTP/1.1 404 Not Found\r\n"
-                "Accept-Ranges: bytes\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Length: 13\r\n"
-                "Cache-Control: max-age=86000\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                "404 Not Found"
-            ).encode('utf-8')
-
-
+    #ham nay chi thuc hien build thoi, serialize de sau
     def build_response(self, request):
         """
         Builds a full HTTP response including headers and content based on the request.
@@ -278,24 +390,53 @@ class Response():
         """
 
         path = request.path
+        if not path:  # Path k dc parse thi tra ve loi 400
+            self.status_code = 400
+            self.reason = "Bad Request"
+            self.headers['Content-Type'] = 'text/html'
+            self._content = b"<h1>400 Bad Request</h1>"
+            return self
 
+        #mime la dictionary dang type/subtype nhu image/png
         mime_type = self.get_mime_type(path)
         print("[Response] {} path {} mime_type {}".format(request.method, request.path, mime_type))
 
         base_dir = ""
+        c_len = 0
 
         #If HTML, parse and serve embedded objects
-        if path.endswith('.html') or mime_type == 'text/html':
-            base_dir = self.prepare_content_type(mime_type = 'text/html')
-        elif mime_type == 'text/css':
-            base_dir = self.prepare_content_type(mime_type = 'text/css')
-        #
-        # TODO: add support objects
-        #
+        try:
+            if path.endswith('.html') or mime_type == 'text/html':
+                base_dir = self.prepare_content_type(mime_type='text/html')
+            elif mime_type == 'text/css':
+                base_dir = self.prepare_content_type(mime_type='text/css')
+            #
+            # TODO: add support objects
+            #
+            else:
+                # If mime type is not supported, then 404
+                print(f"[Response] Unsupported MIME type: {mime_type}")
+                base_dir = ""
+
+        except ValueError as e:
+            # prepare_content_type bao loi
+            print(f"[Response] Error in prepare_content_type: {e}")
+            base_dir = ""
+
+        if not base_dir:
+            c_len, self._content = 0, b""
         else:
-            return self.build_notfound()
+            c_len, self._content = self.build_content(path, base_dir)
 
-        c_len, self._content = self.build_content(path, base_dir)
-        self._header = self.build_response_header(request)
+        if c_len == 0 and not self._content:  # Check for 0 length or empty content
+            self.status_code = 404
+            self.reason = "Not Found"
+            self.headers['Content-Type'] = 'text/html'
+            self._content = b"<h1>404 Not Found</h1>"
+        else:
+            self.status_code = 200
+            self.reason = "OK"
+            # Content-Type is already set by prepare_content_type
+            self.headers['Content-Length'] = str(c_len)  # Set content length
 
-        return self._header + self._content
+        return self

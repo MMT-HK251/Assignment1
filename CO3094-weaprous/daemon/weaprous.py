@@ -31,6 +31,7 @@ class WeApRous:
 
     Usage::
       >>> import daemon.weaprous
+      >>> from daemon.response import Response
       >>> app = WeApRous()
       >>> @app.route('/login', methods=['POST'])
       >>> def login(headers="guest", body="anonymous"):

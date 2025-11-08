@@ -100,25 +100,102 @@ class HttpAdapter:
         # Request handler
         req = self.request
         # Response handler
-        resp = self.response
+        resp = Response(request=req)
 
         # Handle the request
-        msg = conn.recv(1024).decode()
+        msg = ""
+        try:
+            raw_request = b""
+            while b"\r\n\r\n" not in raw_request:
+                chunk = conn.recv(1024)
+                if not chunk:
+                    # Client disconnected before sending full headers
+                    print(f"[HttpAdapter] Client {addr} disconnected before sending headers.")
+                    conn.close()
+                    return
+                raw_request += chunk
+
+            # Split headers from the body (or body-part)
+            header_part_raw, body_part_raw = raw_request.split(b"\r\n\r\n", 1)
+            header_part_str = header_part_raw.decode('utf-8')
+
+            # Find Content-Length to read the rest of the body
+            content_length = 0
+            for line in header_part_str.split("\r\n"):
+                if line.lower().startswith("content-length:"):
+                    try:
+                        content_length = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        print(f"[HttpAdapter] Invalid Content-Length from {addr}.")
+                        content_length = 0
+                    break
+
+            # Read exactly the amount of body specified
+            while len(body_part_raw) < content_length:
+                bytes_to_read = min(1024, content_length - len(body_part_raw))
+                chunk = conn.recv(bytes_to_read)
+                if not chunk:
+                    print(f"[HttpAdapter] Client {addr} disconnected mid-body.")
+                    conn.close()
+                    return
+                body_part_raw += chunk
+
+            # Now, re-combine everything into the single string that req.prepare expects.
+            # This is flawed (decoding a binary body) but required by req.prepare's design.
+            try:
+                body_part_str = body_part_raw.decode('utf-8')
+            except UnicodeDecodeError:
+                print("[HttpAdapter] Warning: Body is not valid UTF-8. Treating as raw.")
+                # This will likely fail in req.prepare, but we try anyway.
+                body_part_str = body_part_raw.decode('latin-1')
+
+            msg = header_part_str + "\r\n\r\n" + body_part_str
+
+            if not msg:
+                print(f"[HttpAdapter] Empty request from {addr}. Closing.")
+                conn.close()
+                return
+        except Exception as e:
+            print(f"[HttpAdapter] Error receiving data: {e}")
+            conn.close()
+            return
+
         req.prepare(msg, routes)
 
         # Handle request hook
         if req.hook:
             print("[HttpAdapter] hook in route-path METHOD {} PATH {}".format(req.hook._route_path,req.hook._route_methods))
-            req.hook(headers = "bksysnet",body = "get in touch")
+            req.hook(req)
             #
             # TODO: handle for App hook here
             #
+            try:
+                # The hook function takes the request and returns a Response object
+                resp_from_hook = req.hook(req)
+
+                # Check if the hook returned a valid Response
+                if isinstance(resp_from_hook, Response):
+                    resp = resp_from_hook
+                else:
+                    # Hook didn't return a Response, create an error
+                    print(f"[HttpAdapter] Hook for {req.path} did not return a Response object.")
+                    resp = Response.internal_server_error_html("Hook did not return a valid response.")
+
+            except Exception as e:
+                print(f"[HttpAdapter] Hook failed: {e}")
+                import traceback
+                traceback.print_exc() #debug
+                resp = Response.internal_server_error_html(str(e))
+        else:
+            # Build file-based response (this method now returns `self`)
+            print(f"[HttpAdapter] No hook found. Serving file for path: {req.path}")
+            resp.build_response(req)
 
         # Build response
-        response = resp.build_response(req)
+        response_bytes = resp.serialize()
 
         #print(response)
-        conn.sendall(response)
+        conn.sendall(response_bytes)
         conn.close()
 
     @property
@@ -131,15 +208,10 @@ class HttpAdapter:
         :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
-        for header in headers:
-            if header.startswith("Cookie:"):
-                cookie_str = header.split(":", 1)[1].strip()
-                for pair in cookie_str.split(";"):
-                    key, value = pair.strip().split("=")
-                    cookies[key] = value
-        return cookies
+        # Vì cookie đã được build sẵn trong request rồi, nên ta chỉ cần extract từ req
+        return req.cookies
 
-    def build_response(self, req, resp):
+    def build_response(self, req, resp): #Có vẻ dư vì respone có func này mà nhỉ?
         """Builds a :class:`Response <Response>` object 
 
         :param req: The :class:`Request <Request>` used to generate the response.
@@ -149,7 +221,7 @@ class HttpAdapter:
         response = Response()
 
         # Set encoding.
-        response.encoding = get_encoding_from_headers(response.headers)
+        #response.encoding = get_encoding_from_headers(response.headers)
         response.raw = resp
         response.reason = response.raw.reason
 
@@ -159,7 +231,8 @@ class HttpAdapter:
             response.url = req.url
 
         # Add new cookies from the server.
-        response.cookies = extract_cookies(req)
+        #response.cookies = extract_cookies(req)
+        response.cookies = req.cookies #Lấy cookie từ request bỏ vào response
 
         # Give the Response some context.
         response.request = req
@@ -226,6 +299,10 @@ class HttpAdapter:
         username, password = ("user1", "password")
 
         if username:
-            headers["Proxy-Authorization"] = (username, password)
+            #headers["Proxy-Authorization"] = (username, password)
+            #basic auth có dạng :<auth-scheme> <credentials>
+            import base64
+            creds = f"{username}:{password}".encode()
+            headers["Proxy-Authorization"] = f"Basic {base64.b64encode(creds).decode()}"
 
         return headers
